@@ -2,8 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-// ТВОЯ АКТУАЛЬНА ССЫЛКА (обнови если сменится)
-const String baseUri = "https://44stgk2r-5152.euw.devtunnels.ms";
+// --- НАСТРОЙКИ МАСШТАБИРОВАНИЯ (Обнови ссылки из PowerShell) ---
+const String authBaseUri = "https://05l8n6bz-5152.euw.devtunnels.ms";   // Порт 5152
+const String trainsBaseUri = "https://5v6hx7v5-5153.euw.devtunnels.ms"; // Порт 5153
+
+
+// Заголовки для обхода анти-фишинга Dev Tunnels
+const Map<String, String> tunnelHeaders = {
+  "X-Tunnel-Skip-AntiPhishing-Page": "true",
+  "Content-Type": "application/json",
+};
 
 void main() => runApp(const TransportApp());
 
@@ -19,11 +27,10 @@ class TransportApp extends StatelessWidget {
   }
 }
 
-// Глобальные данные текущего пользователя
 int? currentUserId;
 String? currentUserName;
 
-// --- 1. РЕГИСТРАЦИЯ (Query Params) ---
+// --- 1. РЕГИСТРАЦИЯ (Auth Service - 5152) ---
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
   @override
@@ -36,14 +43,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final passCtrl = TextEditingController();
 
   Future<void> register() async {
-    // Формируем URL с параметрами, как того требует твой C# метод Register
-    final url = Uri.parse("$baseUri/api/Auth/register").replace(queryParameters: {
+    final url = Uri.parse("$authBaseUri/api/Auth/register").replace(queryParameters: {
       "name": nameCtrl.text,
       "email": emailCtrl.text,
       "password": passCtrl.text,
     });
 
-    final res = await http.post(url);
+    final res = await http.post(url, headers: tunnelHeaders);
     
     if (res.statusCode == 200) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Реєстрація успішна!")));
@@ -71,7 +77,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-// --- 2. ВХОД (Query Params) ---
+// --- 2. ВХОД (Auth Service - 5152) ---
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
   @override
@@ -83,19 +89,18 @@ class _LoginScreenState extends State<LoginScreen> {
   final passCtrl = TextEditingController();
 
   Future<void> login() async {
-    // Твой метод Login ждет email и password в строке запроса
-    final url = Uri.parse("$baseUri/api/Auth/login").replace(queryParameters: {
+    final url = Uri.parse("$authBaseUri/api/Auth/login").replace(queryParameters: {
       "email": emailCtrl.text,
       "password": passCtrl.text,
     });
 
-    final res = await http.post(url);
+    final res = await http.post(url, headers: tunnelHeaders);
 
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       setState(() {
         currentUserId = data['userId'];
-        currentUserName = data['message']; // Там фраза "Вітаю, Марина!"
+        currentUserName = data['message'];
       });
       Navigator.pushReplacement(context, MaterialPageRoute(builder: (c) => const MainNavigation()));
     } else {
@@ -124,7 +129,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-// --- 3. НАВИГАЦИЯ ---
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
   @override
@@ -137,6 +141,25 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: Text("Вітаю, ${currentUserName?.split(',')[1] ?? 'Користувач'}"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.red),
+            onPressed: () {
+              // Обнуляємо дані
+              currentUserId = null;
+              currentUserName = null;
+              // Повертаємось на екран логіну та очищуємо історію переходів
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (c) => const LoginScreen()),
+                (route) => false,
+              );
+            },
+          ),
+        ],
+      ),
       body: _tabs[_idx],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _idx,
@@ -150,119 +173,98 @@ class _MainNavigationState extends State<MainNavigation> {
   }
 }
 
-// --- 4. РАСПИСАНИЕ С ОСТАНОВКАМИ ---
+// --- 3. РАСПИСАНИЕ (Trains Service - 5153) ---
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
-
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
-  // Метод для получения данных
   Future<List<dynamic>> getTrains() async {
+    // ТЕПЕРЬ ТЯНЕМ С 5153! (Trains Service)
     final res = await http.get(
-      Uri.parse("$baseUri/api/Auth/trains"),
-      headers: {"X-Tunnel-Skip-AntiPhishing-Page": "true"},
+      Uri.parse("$trainsBaseUri/api/Trains"), 
+      headers: tunnelHeaders,
     );
-    return jsonDecode(res.body);
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    } else {
+      throw Exception("Ошибка загрузки расписания");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Доступні поїзди"),
+        title: const Text("Розклад (Scaled)"),
         actions: [
-          // Кнопка обновления в верхней панели
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              setState(() {}); // Перерисовывает экран и вызывает FutureBuilder заново
-            },
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: () => setState(() {})),
         ],
       ),
       body: FutureBuilder<List<dynamic>>(
-        // Каждый раз, когда вызывается setState, future запускается заново
         future: getTrains(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(child: Text("Помилка: ${snap.error}"));
-          }
-          if (!snap.hasData || snap.data!.isEmpty) {
-            return const Center(child: Text("Поїздів не знайдено"));
-          }
+          if (snap.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snap.hasError) return Center(child: Text("Помилка сервісу поїздів: ${snap.error}"));
+          
+          final trains = snap.data ?? [];
+          return ListView.builder(
+            itemCount: trains.length,
+            itemBuilder: (c, i) {
+              final train = trains[i];
+              return ListTile(
+                leading: const Icon(Icons.train, color: Colors.blue),
+                title: Text("Поїзд №${train['number']}"),
+                subtitle: Text("Зупинок: ${train['route']?.length ?? 0}"),
+                trailing: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Text(
+        (train['delayMinutes'] ?? 0) > 0 
+            ? "+${train['delayMinutes']} хв" 
+            : "Вчасно",
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 14,
+          color: (train['delayMinutes'] ?? 0) > 0 ? Colors.red : Colors.green,
+        ),
+      ),
+      if ((train['delayMinutes'] ?? 0) > 0)
+        const Text(
+          "запізнення",
+          style: TextStyle(fontSize: 10, color: Colors.grey),
+        ),
+    ],
+  ),
+                onTap: () {
+                  // ЗАПИСЬ В ИСТОРИЮ (Auth Service - 5152)
+                  final viewUrl = Uri.parse("$authBaseUri/api/Auth/view").replace(queryParameters: {
+                    "userId": currentUserId.toString(),
+                    "trainId": train['id'].toString(),
+                  });
+                  http.post(viewUrl, headers: tunnelHeaders);
 
-          return RefreshIndicator(
-            onRefresh: () async {
-              setState(() {});
+                  showModalBottomSheet(
+                    context: context,
+                    builder: (c) => ListView(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Text("Зупинки №${train['number']}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        ),
+                        ...(train['route'] as List).map((r) => ListTile(
+                          title: Text(r['station']['name']),
+                          subtitle: Text("Прибуття: ${r['scheduledArrival']}"),
+                        )).toList(),
+                      ],
+                    ),
+                  );
+                },
+              );
             },
-            child: ListView.builder(
-              itemCount: snap.data!.length,
-              itemBuilder: (c, i) {
-                final train = snap.data![i];
-                final int delay = train['delayMinutes'] ?? 0;
-
-                return ListTile(
-                  leading: const Icon(Icons.train),
-                  title: Text("Поїзд №${train['number']}"),
-                  subtitle: Text("Маршрут: ${train['route'].length} зупинок"),
-                  // --- ОТОБРАЖЕНИЕ ЗАДЕРЖКИ СБОКУ ---
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        delay > 0 ? "+$delay хв" : "Вчасно",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: delay > 0 ? Colors.red : Colors.green,
-                        ),
-                      ),
-                      if (delay > 0)
-                        const Text(
-                          "затримка",
-                          style: TextStyle(fontSize: 10, color: Colors.grey),
-                        ),
-                    ],
-                  ),
-                  onTap: () {
-                    // Запись просмотра (RecordView)
-                    final viewUrl = Uri.parse("$baseUri/api/Auth/view").replace(queryParameters: {
-                      "userId": currentUserId.toString(),
-                      "trainId": train['id'].toString(),
-                    });
-                    http.post(viewUrl);
-
-                    // Открытие остановок
-                    showModalBottomSheet(
-                      context: context,
-                      builder: (c) => ListView(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Text(
-                              "Зупинки поїзда №${train['number']}",
-                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          ...(train['route'] as List).map((r) => ListTile(
-                            leading: const Icon(Icons.location_on_outlined),
-                            title: Text(r['station']['name']),
-                            subtitle: Text("Прибуття: ${r['scheduledArrival']}"),
-                          )).toList(),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
           );
         },
       ),
@@ -270,20 +272,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 }
 
-// --- 5. ИСТОРИЯ (под твой Select в C#) ---
+// --- 4. ИСТОРИЯ (Auth Service - 5152) ---
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
 
   Future<List<dynamic>> getHistory() async {
-    final res = await http.get(Uri.parse("$baseUri/api/Auth/history/$currentUserId"), 
-      headers: {"X-Tunnel-Skip-AntiPhishing-Page": "true"});
+    final res = await http.get(
+      Uri.parse("$authBaseUri/api/Auth/history/$currentUserId"),
+      headers: tunnelHeaders,
+    );
     return jsonDecode(res.body);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Ваші перегляди")),
+      appBar: AppBar(title: const Text("Ваша історія")),
       body: FutureBuilder<List<dynamic>>(
         future: getHistory(),
         builder: (context, snap) {
@@ -293,15 +297,9 @@ class HistoryScreen extends StatelessWidget {
             itemBuilder: (c, i) {
               final h = snap.data![i];
               return Card(
-                margin: const EdgeInsets.all(8),
-                child: ExpansionTile(
+                child: ListTile(
                   title: Text("Поїзд №${h['trainNumber']}"),
                   subtitle: Text("Переглянуто: ${h['viewedAt']}"),
-                  children: (h['stops'] as List).map((s) => ListTile(
-                    dense: true,
-                    title: Text(s['stationName']),
-                    subtitle: Text("Час: ${s['arrival']} - ${s['departure']}"),
-                  )).toList(),
                 ),
               );
             },
